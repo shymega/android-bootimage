@@ -1,0 +1,15 @@
+[package]
+name = "android-bootimage"
+version = "0.1.0"
+authors = ["Jeroen Bollen <contact@jeroenbollen.eu>"]
+
+[dependencies]
+byteorder = "1.1"
+quick-error = "1.2"
+clap = "2.26"
+termcolor = "0.3.2"
+humansize = "1.0"
+
+[[bin]]
+name = "android-bootimage"
+doc = false
