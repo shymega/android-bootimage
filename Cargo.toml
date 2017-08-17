@@ -2,6 +2,13 @@
 name = "android-bootimage"
 version = "0.1.0"
 authors = ["Jeroen Bollen <contact@jeroenbollen.eu>"]
+description = "A tool to handle android boot images. It currently only works for Samsung boot images."
+homepage = "https://gitlab.com/binero/android-bootimage"
+repository = "https://gitlab.com/binero/android-bootimage"
+readme = "Readme.md"
+keywords = ["android", "tool", "bootimage"]
+categories = ["command-line-utilities", "data-structures"]
+license = "Unlicense"
 
 [dependencies]
 byteorder = "1.1"
