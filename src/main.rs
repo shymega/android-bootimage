@@ -4,7 +4,7 @@ extern crate clap;
 extern crate termcolor;
 extern crate humansize;
 
-use android_bootimage::{MagicHeader, Section};
+use android_bootimage::{Header, Section};
 use clap::{App, Arg, ArgMatches};
 use console::ConsoleOutputHandler;
 use std::io::{Read, Seek, Write};
@@ -12,9 +12,11 @@ use std::path::Path;
 use termcolor::ColorChoice;
 
 const ARG_UNPACK_ALL_LONG_HELP: &'static str = "
-Unpack all sections of the boot image to their default locations. 
+Unpack all sections of the boot image to their default locations.
 
-The default locations for the different sections are 'boot/SECTION_NAME.img', where 'SECTION_NAME' is the name of the section. For example, the kernel will be put into 'boot/kernel.img'.
+The default locations for the different sections are 'boot/SECTION_NAME.img', where \
+'SECTION_NAME' is the name of the section. For example, the kernel will be put \
+into 'boot/kernel.img'.
 ";
 
 fn main() {
@@ -150,12 +152,10 @@ fn main_unpack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
 
     let mut input_file = match File::open(input_path) {
         Ok(file) => file,
-        Err(error) => {
-            console.print_fatal_error(
-                &format!("to open boot image file '{}'", input_path.display()),
-                Some(&error),
-            )
-        }
+        Err(error) => console.print_fatal_error(
+            &format!("to open boot image file '{}'", input_path.display()),
+            Some(&error),
+        ),
     };
 
     let header = read_header(
@@ -213,22 +213,18 @@ fn main_unpack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
             }
 
             match File::create(output_path).and_then(|mut file| file.write_all(&data)) {
-                Ok(_) => {
-                    console.print_status_success(
-                        "Unpacked",
-                        &format!("'{}' section into '{}'.", section, output_path.display()),
-                    )
-                }
-                Err(error) => {
-                    console.print_error_as_warning(
-                        &format!(
-                            "Failed to write '{}' section into '{}'",
-                            section,
-                            output_path.display()
-                        ),
-                        Some(&error),
-                    )
-                }
+                Ok(_) => console.print_status_success(
+                    "Unpacked",
+                    &format!("'{}' section into '{}'.", section, output_path.display()),
+                ),
+                Err(error) => console.print_error_as_warning(
+                    &format!(
+                        "Failed to write '{}' section into '{}'",
+                        section,
+                        output_path.display()
+                    ),
+                    Some(&error),
+                ),
             }
 
             return true;
@@ -259,12 +255,10 @@ fn main_sections(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
 
     let mut input_file = match File::open(input_path) {
         Ok(file) => file,
-        Err(error) => {
-            console.print_fatal_error(
-                &format!("to open boot image file '{}'", input_path.display()),
-                Some(&error),
-            )
-        }
+        Err(error) => console.print_fatal_error(
+            &format!("to open boot image file '{}'", input_path.display()),
+            Some(&error),
+        ),
     };
 
     let header = read_header(
@@ -305,17 +299,21 @@ fn read_header<R: Read + Seek>(
     magic_check: bool,
     override_page_size: Option<u32>,
     console: &mut ConsoleOutputHandler,
-) -> MagicHeader {
+) -> Header {
     if !magic_check {
         // Make clear that any following errors might be caused by it not being a valid
         // header.
         console.print_warning_message("Skipping header magic check.");
+    } else {
+        console.print_warning_message("Magic check is currently not implemented.");
     }
 
-    let mut header = match MagicHeader::read_from(source, magic_check) {
-        Ok(header) => header,
-        Err(error) => console.print_fatal_error("Failed to parse boot image header", Some(&error)),
-    };
+    let mut header_data = Header::create_buffer();
+    if let Err(ref error) = source.read_exact(&mut *header_data) {
+        console.print_fatal_error("Failed to read boot image header.", Some(error))
+    }
+
+    let mut header = Header::parse(&header_data);
 
     if let Some(page_size) = override_page_size {
         header.page_size = page_size;
@@ -342,7 +340,9 @@ mod console {
     impl ConsoleOutputHandler {
         /// Creates a new structure.
         pub fn new(color: ColorChoice) -> Self {
-            ConsoleOutputHandler { stream: StandardStream::stdout(color) }
+            ConsoleOutputHandler {
+                stream: StandardStream::stdout(color),
+            }
         }
 
         pub fn print_message(&mut self, message: &str) {
@@ -351,22 +351,16 @@ mod console {
         }
 
         pub fn print_error_message(&mut self, message: &str) {
-            let _ = self.stream.set_color(
-                ColorSpec::new()
-                    .set_fg(Some(Color::Red))
-                    .set_bold(true),
-            );
+            let _ = self.stream
+                .set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true));
 
             let _ = write!(self.stream, "error: ");
             self.print_message(message);
         }
 
         pub fn print_warning_message(&mut self, message: &str) {
-            let _ = self.stream.set_color(
-                ColorSpec::new()
-                    .set_fg(Some(Color::Yellow))
-                    .set_bold(true),
-            );
+            let _ = self.stream
+                .set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(true));
 
             let _ = write!(self.stream, "warning: ");
             self.print_message(message);
@@ -388,9 +382,8 @@ mod console {
         }
 
         fn print_error_cause(&mut self, mut error_opt: Option<&Error>, colour: Color) {
-            let _ = self.stream.set_color(
-                ColorSpec::new().set_fg(Some(colour.clone())),
-            );
+            let _ = self.stream
+                .set_color(ColorSpec::new().set_fg(Some(colour.clone())));
 
             let colour_spec = {
                 let mut colour_spec = ColorSpec::new();

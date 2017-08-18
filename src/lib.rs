@@ -3,8 +3,10 @@ extern crate byteorder;
 extern crate quick_error;
 
 mod header;
+mod image;
 
-pub use header::{MagicHeader, MagicHeaderParseError, LocateSectionError};
+pub use header::{Header, LocateSectionError, HEADER_SIZE};
+pub use image::BootImage;
 use std::fmt;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -18,12 +20,16 @@ pub enum Section {
 
 impl fmt::Display for Section {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "{}", match *self {
-            Section::Header => "header",
-            Section::Kernel => "kernel",
-            Section::Ramdisk => "ramdisk",
-            Section::Second => "second",
-            Section::DeviceTree => "device_tree",
-        })
+        write!(
+            formatter,
+            "{}",
+            match *self {
+                Section::Header => "header",
+                Section::Kernel => "kernel",
+                Section::Ramdisk => "ramdisk",
+                Section::Second => "second",
+                Section::DeviceTree => "device_tree",
+            }
+        )
     }
 }
