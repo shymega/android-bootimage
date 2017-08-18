@@ -1,5 +1,6 @@
 use Header;
 use std::io::{Error as IoError, Read, Seek};
+use std::path::Path;
 
 /// A structure representing a boot image in memory. Used to modify the boot
 /// image through a convenient interface.
@@ -52,7 +53,7 @@ impl BootImage {
     }
 
     /// Inserts a second ramdisk into this boot image, returning the old one.
-    pub fn insert_second(&mut self, mut new_second_ramdisk: Vec<u8>) -> Vec<u8> {
+    pub fn insert_second_ramdisk(&mut self, mut new_second_ramdisk: Vec<u8>) -> Vec<u8> {
         self.header.second_size = new_second_ramdisk.len() as u32;
         ::std::mem::swap(&mut self.second_ramdisk, &mut new_second_ramdisk);
         new_second_ramdisk
@@ -148,10 +149,79 @@ impl BootImage {
         self.second_ramdisk_offset_in_pages() + self.second_ramdisk_size_in_pages()
     }
 
-    pub fn read_from<R: Read + Seek>(source: &mut R) -> Result<Self, ReadBootImageError> {
+    /// Returns the offset to the header, in bytes.
+    pub fn header_offset(&self) -> usize {
+        self.header_offset_in_pages() * self.page_size()
+    }
+
+    /// Returns the offset to the kernel, in bytes.
+    pub fn kernel_offset(&self) -> usize {
+        self.kernel_offset_in_pages() * self.page_size()
+    }
+
+    /// Returns the offset to the ramdisk, in bytes.
+    pub fn ramdisk_offset(&self) -> usize {
+        self.ramdisk_offset_in_pages() * self.page_size()
+    }
+
+    /// Returns the offset to the second ramdisk, in bytes.
+    pub fn second_ramdisk_offset(&self) -> usize {
+        self.second_ramdisk_offset_in_pages() * self.page_size()
+    }
+
+    /// Returns the offset to the device tree, in bytes.
+    pub fn device_tree_offset(&self) -> usize {
+        self.device_tree_offset_in_pages() * self.page_size()
+    }
+
+    /// Reads the boot image from a readable source. This source must also be
+    /// seekable, to prevent us from reading in a lot of garbage padding data
+    /// that is between the different sections.
+    ///
+    /// As some boot images have their page size set to 0, an override page
+    /// size can be supplied. If the header size is set to 0, and no valid
+    /// override is supplied, this function will return an error.
+    pub fn read_from<R: Read + Seek>(
+        source: &mut R,
+        override_page_size: Option<u32>,
+    ) -> Result<Self, ReadBootImageError> {
         let mut boot_image = BootImage::default();
-        let _ = boot_image.insert_header(Header::read_from(source)?)?;
+        let mut header = Header::read_from(source)?;
+
+        if let Some(page_size) = override_page_size {
+            header.page_size = page_size;
+        }
+
+        let mut kernel = vec![0; header.kernel_size as usize];
+        let mut ramdisk = vec![0; header.ramdisk_size as usize];
+        let mut second_ramdisk = vec![0; header.second_size as usize];
+        let mut device_tree = vec![0; header.device_tree_size as usize];
+        source.read_exact(&mut kernel)?;
+        source.read_exact(&mut ramdisk)?;
+        source.read_exact(&mut second_ramdisk)?;
+        source.read_exact(&mut device_tree)?;
+        boot_image.insert_kernel(kernel);
+        boot_image.insert_ramdisk(ramdisk);
+        boot_image.insert_second_ramdisk(second_ramdisk);
+        boot_image.insert_device_tree(device_tree);
+
+        let _ = boot_image.insert_header(header)?;
         Ok(boot_image)
+    }
+
+    /// Reads the boot image from a file.
+    ///
+    /// As some boot images have their page size set to 0, an override page
+    /// size can be supplied. If the header size is set to 0, and no valid
+    /// override is supplied, this function will return an error.
+    pub fn read_from_file<P: AsRef<Path>>(
+        file_path: P,
+        override_page_size: Option<u32>,
+    ) -> Result<Self, ReadBootImageError> {
+        use std::fs::File;
+
+        let mut file_handle = File::open(file_path)?;
+        BootImage::read_from(&mut file_handle, override_page_size)
     }
 }
 

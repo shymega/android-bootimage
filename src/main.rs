@@ -4,7 +4,7 @@ extern crate clap;
 extern crate termcolor;
 extern crate humansize;
 
-use android_bootimage::{Header, Section};
+use android_bootimage::{BootImage, Header, Section};
 use clap::{App, Arg, ArgMatches};
 use console::ConsoleOutputHandler;
 use std::io::{Read, Seek, Write};
@@ -249,47 +249,51 @@ fn main_unpack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
 }
 
 fn main_sections(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
-    use std::fs::File;
+    let input_path = arguments.value_of("input_file").unwrap();
+    let override_page_size = arguments.value_of("page_size").map(|_| {
+        value_t!(arguments.value_of("page_size"), u32).unwrap_or_else(|error| error.exit())
+    });
 
-    let input_path = Path::new(arguments.value_of("input_file").unwrap());
-
-    let mut input_file = match File::open(input_path) {
-        Ok(file) => file,
-        Err(error) => console.print_fatal_error(
-            &format!("to open boot image file '{}'", input_path.display()),
-            Some(&error),
+    let boot_image = match BootImage::read_from_file(input_path, override_page_size) {
+        Ok(boot_image) => boot_image,
+        Err(ref error) => console.print_fatal_error(
+            format!("Could not read boot image from '{}'.", input_path),
+            Some(error),
         ),
     };
 
-    let header = read_header(
-        &mut input_file,
-        !arguments.is_present("no_magic_check"),
-        arguments.value_of("page_size").map(|_| {
-            value_t!(arguments.value_of("page_size"), u32).unwrap_or_else(|error| error.exit())
-        }),
-        &mut console,
+    print_sections(&boot_image);
+}
+
+fn print_sections(bi: &BootImage) {
+    use android_bootimage::HEADER_SIZE;
+
+    print_section("Header", bi.header_offset(), HEADER_SIZE);
+    print_section("Kernel", bi.kernel_offset(), bi.kernel().len());
+    print_section("Ramdisk", bi.ramdisk_offset(), bi.ramdisk().len());
+    print_section(
+        "Second Ramdisk",
+        bi.second_ramdisk_offset(),
+        bi.second_ramdisk().len(),
+    );
+    print_section(
+        "Device Tree",
+        bi.device_tree_offset(),
+        bi.device_tree().len(),
     );
 
-    for section in header.sections() {
-        use humansize::FileSize;
-        use humansize::file_size_opts::BINARY as BINARY_FILE_SIZE;
+    fn print_section(section: &str, start: usize, size: usize) {
+        if size != 0 {
+            // Only print sections that are there.
+            use humansize::FileSize;
+            use humansize::file_size_opts::BINARY as BINARY_FILE_SIZE;
 
-        match header.section_location(section) {
-            Ok((start, size)) => {
-                println!(
-                    "0x{:08X} - {: <12} (size: {})",
-                    start,
-                    section,
-                    size.file_size(BINARY_FILE_SIZE).unwrap()
-                );
-            }
-            Err(ref error) => {
-                println!("0x???????? - {: <12} (size: ?)", section);
-                console.print_error_as_warning(
-                    &format!("Could not get loction of '{}' section.", section),
-                    Some(error),
-                );
-            }
+            println!(
+                "0x{:08X} - {: <14} (size: {})",
+                start,
+                section,
+                size.file_size(BINARY_FILE_SIZE).unwrap()
+            );
         }
     }
 }
@@ -345,12 +349,12 @@ mod console {
             }
         }
 
-        pub fn print_message(&mut self, message: &str) {
+        pub fn print_message<M: AsRef<str>>(&mut self, message: M) {
             let _ = self.stream.set_color(&ColorSpec::new());
-            let _ = writeln!(self.stream, "{}", message);
+            let _ = writeln!(self.stream, "{}", message.as_ref());
         }
 
-        pub fn print_error_message(&mut self, message: &str) {
+        pub fn print_error_message<M: AsRef<str>>(&mut self, message: M) {
             let _ = self.stream
                 .set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true));
 
@@ -358,7 +362,7 @@ mod console {
             self.print_message(message);
         }
 
-        pub fn print_warning_message(&mut self, message: &str) {
+        pub fn print_warning_message<M: AsRef<str>>(&mut self, message: M) {
             let _ = self.stream
                 .set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(true));
 
@@ -366,11 +370,16 @@ mod console {
             self.print_message(message);
         }
 
-        fn print_status(&mut self, colour: &ColorSpec, status: &str, message: &str) {
+        fn print_status<M1: AsRef<str>, M2: AsRef<str>>(
+            &mut self,
+            colour: &ColorSpec,
+            status: M1,
+            message: M2,
+        ) {
             let _ = self.stream.set_color(colour);
-            let _ = write!(self.stream, "{: >12}", status);
+            let _ = write!(self.stream, "{: >12}", status.as_ref());
             let _ = self.stream.set_color(&ColorSpec::new());
-            let _ = writeln!(self.stream, " {}", message);
+            let _ = writeln!(self.stream, " {}", message.as_ref());
         }
 
         pub fn print_status_success(&mut self, status: &str, message: &str) {
@@ -399,17 +408,29 @@ mod console {
             }
         }
 
-        pub fn print_error_as_error(&mut self, message: &str, error_opt: Option<&Error>) {
+        pub fn print_error_as_error<M: AsRef<str>>(
+            &mut self,
+            message: M,
+            error_opt: Option<&Error>,
+        ) {
             self.print_error_message(message);
             self.print_error_cause(error_opt, Color::Red);
         }
 
-        pub fn print_error_as_warning(&mut self, message: &str, error_opt: Option<&Error>) {
+        pub fn print_error_as_warning<M: AsRef<str>>(
+            &mut self,
+            message: M,
+            error_opt: Option<&Error>,
+        ) {
             self.print_warning_message(message);
             self.print_error_cause(error_opt, Color::Yellow);
         }
 
-        pub fn print_fatal_error(&mut self, message: &str, error_opt: Option<&Error>) -> ! {
+        pub fn print_fatal_error<M: AsRef<str>>(
+            &mut self,
+            message: M,
+            error_opt: Option<&Error>,
+        ) -> ! {
             use std::process::exit;
             self.print_error_as_error(message, error_opt);
             exit(1);

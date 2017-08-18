@@ -9,6 +9,7 @@ pub use header::{Header, LocateSectionError, HEADER_SIZE};
 pub use image::BootImage;
 use std::fmt;
 
+/// Enum representing a single section in a boot image.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Section {
     Header,
