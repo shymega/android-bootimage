@@ -5,7 +5,7 @@ extern crate quick_error;
 mod header;
 mod image;
 
-pub use header::{Header, LocateSectionError, HEADER_SIZE};
+pub use header::{HEADER_SIZE, Header, LocateSectionError};
 pub use image::BootImage;
 use std::fmt;
 

@@ -23,7 +23,7 @@ const SECTIONS: &'static [Section] = &[
 ];
 
 /// Contains a magic header.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Header {
     /// Header magic. Used to make sure this is in fact a header.
     pub magic: [u8; MAGIC_SIZE],

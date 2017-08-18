@@ -5,7 +5,7 @@ extern crate termcolor;
 extern crate humansize;
 
 use android_bootimage::{BootImage, Header, Section};
-use clap::{App, Arg, ArgMatches};
+use clap::{App, Arg, ArgGroup, ArgMatches};
 use console::ConsoleOutputHandler;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
@@ -24,7 +24,7 @@ fn main() {
 
     match create_app().get_matches().subcommand() {
         ("unpack", Some(arguments)) => main_unpack(arguments, console),
-        ("sections", Some(arguments)) => main_sections(arguments, console),
+        ("repack", Some(arguments)) => main_repack(arguments, console),
         _ => unreachable!(),
     }
 }
@@ -37,7 +37,8 @@ fn create_app() -> App<'static, 'static> {
         .author(crate_authors!())
         .about("Program for handling samsung boot images.")
         .subcommand(create_app_unpack())
-        .subcommand(create_app_sections())
+        .subcommand(create_app_repack())
+        .max_term_width(120)
 }
 
 fn create_app_unpack() -> App<'static, 'static> {
@@ -119,29 +120,64 @@ fn create_app_unpack() -> App<'static, 'static> {
         )
 }
 
-fn create_app_sections() -> App<'static, 'static> {
-    App::new("sections")
-        .about("Lists the sections in a boot image.")
-        .arg(
-            Arg::with_name("input_file")
-                .required(true)
-                .help("The boot image, for example 'boot.img'")
-                .value_name("INPUT_FILE"),
+fn create_app_repack() -> App<'static, 'static> {
+    App::new("repack")
+        .about(
+            "Handles inserting into and extracting sections out of a boot image.",
+        )
+        .group(
+            ArgGroup::with_name("input_files")
+                .args(&[
+                    "input_boot_file",
+                    "input_header_file",
+                    "input_kernel_file",
+                ])
+                .multiple(true),
         )
         .arg(
-            Arg::with_name("no_magic_check")
-                .help("Do not check if the magic signature is correct")
-                .long("--no-magic-check"),
-        )
-        .arg(
-            Arg::with_name("page_size")
-                .short("p")
-                .long("page-size")
-                .help("Use a custom page size")
+            Arg::with_name("input_boot_file")
+                .help("Supplies a boot image to extract sections from")
                 .long_help(
-                    "Use a custom page size. This may be required on some boot images.",
+                    "
+Supplies a boot image to extract sections from. If neither this parameter, nor the \
+'--input-header-file' parameter is used, a default header will be supplied to the boot image.",
                 )
-                .value_name("PAGE_SIZE"),
+                .long("input-boot-file")
+                .visible_aliases(&["input-boot", "iboot"])
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("input_header_file")
+                .help("Supplies a header image to insert into the boot image")
+                .long_help(
+                    "
+Supplies a header image to insert into the boot image. If neither this parameter, nor the \
+'--input-boot-file' parameter is used, a default header will be supplied to the boot image.",
+                )
+                .long("input-header-file")
+                .visible_aliases(&["input-header", "iheader"])
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("input_kernel_file")
+                .help("Supplies a kernel image to insert into the boot image")
+                .long("input-kernel-file")
+                .visible_aliases(&["input-kernel", "ikernel"])
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("input_page_size")
+                .long("input-page-size")
+                .visible_alias("ipage-size")
+                .short("p")
+                .help("Treat the input boot image as if it had this page size")
+                .long_help(
+                    "
+Treat the input boot image as if it had this page size. This switch is required if the input \
+boot image or the input header have their page sizes set to 0. This parameter does nothing when no \
+boot image or kernel image have been passed.",
+                )
+                .value_name("INPUT_PAGE_SIZE"),
         )
 }
 
@@ -248,19 +284,31 @@ fn main_unpack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
     }
 }
 
-fn main_sections(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
-    let input_path = arguments.value_of("input_file").unwrap();
-    let override_page_size = arguments.value_of("page_size").map(|_| {
-        value_t!(arguments.value_of("page_size"), u32).unwrap_or_else(|error| error.exit())
+fn main_repack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
+    if arguments.is_present("input_page_size") &&
+        !(arguments.is_present("input_boot_file") || arguments.is_present("input_header_file"))
+    {
+        console.print_warning_message(
+            "Input page size was supplied, but no input boot image or input header to apply it to.",
+        );
+    }
+
+    let override_page_size = arguments.value_of("input_page_size").map(|_| {
+        value_t!(arguments.value_of("input_page_size"), u32).unwrap_or_else(|error| error.exit())
     });
 
-    let boot_image = match BootImage::read_from_file(input_path, override_page_size) {
-        Ok(boot_image) => boot_image,
-        Err(ref error) => console.print_fatal_error(
-            format!("Could not read boot image from '{}'.", input_path),
-            Some(error),
-        ),
-    };
+    let boot_image = arguments
+        .value_of("input_boot_file")
+        .map(|path| {
+            match BootImage::read_from_file(path, override_page_size) {
+                Ok(boot_image) => boot_image,
+                Err(ref error) => console.print_fatal_error(
+                    format!("Could not read boot image from '{}'.", path),
+                    Some(error),
+                ),
+            }
+        })
+        .unwrap_or(BootImage::default());
 
     print_sections(&boot_image);
 }
