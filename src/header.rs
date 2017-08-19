@@ -1,7 +1,5 @@
-use Section;
 use byteorder::{LittleEndian, ReadBytesExt};
-use quick_error::ResultExt;
-use std::io::{Error as IoError, Read, Seek, SeekFrom};
+use std::io::{Error as IoError, Read};
 
 /// The size of the header, in bytes. This might not match up with the
 /// amount of bytes the structure consumes while in memory.
@@ -12,15 +10,6 @@ const MAGIC_SIZE: usize = 8;
 const PRODUCT_NAME_SIZE: usize = 24;
 const BOOT_ARGUMENTS_SIZE: usize = 512;
 const UNIQUE_ID_SIZE: usize = 32;
-
-/// The different sections in a Samsung boot image, in order.
-const SECTIONS: &'static [Section] = &[
-    Section::Header,
-    Section::Kernel,
-    Section::Ramdisk,
-    Section::Second,
-    Section::DeviceTree,
-];
 
 /// Contains a magic header.
 #[derive(Debug, Clone)]
@@ -110,84 +99,6 @@ impl Header {
     pub fn correct_magic(&self) -> bool {
         self.magic == MAGIC_STR.as_bytes()
     }
-
-    /// Creates a buffer useful for storing header data in.
-    pub fn create_buffer() -> Box<[u8; HEADER_SIZE]> {
-        Box::new(unsafe { ::std::mem::uninitialized() })
-    }
-
-    /// Returns the size of a section, in bytes.
-    pub fn section_size(&self, section: Section) -> u64 {
-        match section {
-            Section::Header => HEADER_SIZE as u64,
-            Section::Kernel => self.kernel_size as u64,
-            Section::Ramdisk => self.ramdisk_size as u64,
-            Section::Second => self.second_size as u64,
-            Section::DeviceTree => self.device_tree_size as u64,
-        }
-    }
-
-    /// Returns the start location of a section, in bytes.
-    ///
-    /// Do note that this function can fail because it cannot find a section
-    /// other than the one that was requested. Sections depend on the other
-    /// sections for their locations.
-    pub fn section_start(&self, section: Section) -> Result<u64, LocateSectionError> {
-        if self.page_size == 0 {
-            Err(LocateSectionError::NoPageSize)
-        } else {
-            let offset_in_pages: u64 = SECTIONS
-                .iter()
-                .cloned()
-                // Take every section that comes before the one we want to get the offset for.
-                .take_while(|&i_section| i_section != section)
-                // For every of these sections, calculate the amount of pages it occupies.
-                .map(|section| {
-                    (self.section_size(section) + self.page_size as u64 - 1) / self.page_size as u64
-                })
-                // Calculate how much pages all of these pages together occupy.
-                .sum();
-
-            // Multiply with the size of a page to get the offset in bytes.
-            Ok(offset_in_pages * self.page_size as u64)
-        }
-    }
-
-    /// Returns the start and the end location of a section, in bytes.
-    ///
-    /// Do note that this function can fail because it cannot find a section
-    /// other than the one that was requested. Sections depend on the other
-    /// sections for their locations.
-    pub fn section_location(&self, section: Section) -> Result<(u64, u64), LocateSectionError> {
-        Ok((self.section_start(section)?, self.section_size(section)))
-    }
-
-    /// Reads a section from the given readable resource.
-    ///
-    /// Do note that this function can fail because it cannot find a section
-    /// other than the one that was requested. Sections depend on the other
-    /// sections for their locations.
-    pub fn read_section_from<R: Read + Seek>(
-        &self,
-        source: &mut R,
-        section: Section,
-    ) -> Result<Vec<u8>, ReadSectionError> {
-        let (start, size) = self.section_location(section).context(section)?;
-        try!(source.seek(SeekFrom::Start(start)).context(section));
-        let mut data = vec![0u8; size as usize];
-        try!(source.read_exact(&mut data).context(section));
-        return Ok(data);
-    }
-
-    /// Returns the sections in this boot image, in order. Zero-size sections
-    /// are omitted.
-    pub fn sections(&self) -> Vec<Section> {
-        SECTIONS
-            .iter()
-            .filter(|&&section| self.section_size(section) > 0)
-            .cloned()
-            .collect()
-    }
 }
 
 impl Default for Header {
@@ -207,38 +118,6 @@ impl Default for Header {
             product_name: [0; PRODUCT_NAME_SIZE],
             boot_arguments: [[0; 32]; 16],
             unique_id: [0; UNIQUE_ID_SIZE],
-        }
-    }
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum LocateSectionError {
-        NoPageSize {
-            description("The header's page size is zero")
-            display("The header's page size is 0.")
-        }
-        NoSection(section: Section) {
-            description("The section does not exist")
-            display("The '{}' section does not exist.", section)
-        }
-    }
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum ReadSectionError {
-        LocateSection(section: Section, cause: LocateSectionError) {
-            context(section: Section, cause: LocateSectionError) -> (section, cause)
-            description("Could not locate the section")
-            display("Cannot locate the '{}' section.", section)
-            cause(cause)
-        }
-        IoError(section: Section, cause: IoError) {
-            context(section: Section, cause: IoError) -> (section, cause)
-            description("I/O error while reading the section")
-            display("I/O error while reading the '{}' section.", section)
-            cause(cause)
         }
     }
 }

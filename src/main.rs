@@ -1,31 +1,31 @@
 extern crate android_bootimage;
 #[macro_use]
+extern crate quick_error;
+#[macro_use]
 extern crate clap;
-extern crate termcolor;
+extern crate colored;
 extern crate humansize;
 
-use android_bootimage::{BootImage, Header, Section};
-use clap::{App, Arg, ArgGroup, ArgMatches};
-use console::ConsoleOutputHandler;
-use std::io::{Read, Seek, Write};
-use std::path::Path;
-use termcolor::ColorChoice;
-
-const ARG_UNPACK_ALL_LONG_HELP: &'static str = "
-Unpack all sections of the boot image to their default locations.
-
-The default locations for the different sections are 'boot/SECTION_NAME.img', where \
-'SECTION_NAME' is the name of the section. For example, the kernel will be put \
-into 'boot/kernel.img'.
-";
+use android_bootimage::{BadHeaderError, BootImage, Header, ReadBootImageError};
+use clap::{App, Arg, ArgMatches};
+use logger::{log_error, log_error_cause, log_warning, log_warning_cause};
+use quick_error::ResultExt;
+use std::io::Error as IoError;
+use std::path::{Path, PathBuf};
 
 fn main() {
-    let console = ConsoleOutputHandler::new(ColorChoice::Auto);
+    let result = match create_app().get_matches().subcommand() {
+        ("repack", Some(arguments)) => main_repack(arguments),
+        _ => panic!("No subcommand was used."),
+    };
 
-    match create_app().get_matches().subcommand() {
-        ("unpack", Some(arguments)) => main_unpack(arguments, console),
-        ("repack", Some(arguments)) => main_repack(arguments, console),
-        _ => unreachable!(),
+    if let Err(error) = result {
+        use std::error::Error;
+
+        match error.cause() {
+            Some(cause) => log_error_cause(format!("{}", error), cause),
+            None => log_error(format!("{}", error)),
+        }
     }
 }
 
@@ -36,88 +36,8 @@ fn create_app() -> App<'static, 'static> {
         .version(crate_version!())
         .author(crate_authors!())
         .about("Program for handling samsung boot images.")
-        .subcommand(create_app_unpack())
         .subcommand(create_app_repack())
         .max_term_width(120)
-}
-
-fn create_app_unpack() -> App<'static, 'static> {
-    App::new("unpack")
-        .about("Unpacks samsung boot images.")
-        .arg(
-            Arg::with_name("input_file")
-                .required(true)
-                .help("The boot image, for example 'boot.img'")
-                .value_name("INPUT_FILE"),
-        )
-        .arg(
-            Arg::with_name("unpack_all")
-                .long("unpack-all")
-                .short("a")
-                .help(
-                    "Unpack all sections of the boot image to their default locations",
-                )
-                .long_help(ARG_UNPACK_ALL_LONG_HELP),
-        )
-        .arg(
-            Arg::with_name("output_kernel_file")
-                .long("kernel")
-                .help("The file to extract the kernel into")
-                .long_help(
-                    "The file to extract the kernel into. If this file already exists \
-                     it will be emptied first.",
-                )
-                .value_name("OUTPUT_KERNEL_FILE")
-                .default_value_if("unpack_all", None, "boot/kernel.img"),
-        )
-        .arg(
-            Arg::with_name("output_ramdisk_file")
-                .long("ramdisk")
-                .help("The file to extract the ramdisk into")
-                .long_help(
-                    "The file to extract the ramdisk into. If this file already exists \
-                     it will be emptied first.",
-                )
-                .value_name("OUTPUT_RAMDISK_FILE")
-                .default_value_if("unpack_all", None, "boot/ramdisk.img"),
-        )
-        .arg(
-            Arg::with_name("output_second_file")
-                .long("second")
-                .help("The file to extract the optional second file into")
-                .long_help(
-                    "The file to extract the optional second file into. If this file already \
-                     exists it will be emptied first.",
-                )
-                .value_name("OUTPUT_SECOND_FILE")
-                .default_value_if("unpack_all", None, "boot/second.img"),
-        )
-        .arg(
-            Arg::with_name("output_tree_file")
-                .long("tree")
-                .help("The file to extract the device tree file into")
-                .long_help(
-                    "The file to extract the device tree file into. If this file already \
-                     exists it will be emptied first.",
-                )
-                .value_name("OUTPUT_TREE_FILE")
-                .default_value_if("unpack_all", None, "boot/device_tree.img"),
-        )
-        .arg(
-            Arg::with_name("no_magic_check")
-                .help("Do not check if the magic signature is correct")
-                .long("--no-magic-check"),
-        )
-        .arg(
-            Arg::with_name("page_size")
-                .short("p")
-                .long("page-size")
-                .help("Use a custom page size")
-                .long_help(
-                    "Use a custom page size. This may be required on some boot images.",
-                )
-                .value_name("PAGE_SIZE"),
-        )
 }
 
 fn create_app_repack() -> App<'static, 'static> {
@@ -125,192 +45,172 @@ fn create_app_repack() -> App<'static, 'static> {
         .about(
             "Handles inserting into and extracting sections out of a boot image.",
         )
-        .group(
-            ArgGroup::with_name("input_files")
-                .args(&[
-                    "input_boot_file",
-                    "input_header_file",
-                    "input_kernel_file",
-                ])
-                .multiple(true),
+        .arg(
+            Arg::with_name("list_sections")
+                .help("Lists all the sections in the boot image")
+                .long_help(
+"Lists all the sections in the boot image, providing information including the section name, \
+offset and size."
+                )
+                .short("l")
+                .long("list")
+                .visible_alias("list-sections")
         )
         .arg(
             Arg::with_name("input_boot_file")
+                .long("input-boot-file")
+                .visible_alias("ibf")
                 .help("Supplies a boot image to extract sections from")
                 .long_help(
-                    "
-Supplies a boot image to extract sections from. If neither this parameter, nor the \
+"Supplies a boot image to extract sections from. If neither this parameter, nor the \
 '--input-header-file' parameter is used, a default header will be supplied to the boot image.",
                 )
-                .long("input-boot-file")
-                .visible_aliases(&["input-boot", "iboot"])
                 .value_name("FILE"),
         )
         .arg(
             Arg::with_name("input_header_file")
                 .help("Supplies a header image to insert into the boot image")
                 .long_help(
-                    "
-Supplies a header image to insert into the boot image. If neither this parameter, nor the \
+"Supplies a header image to insert into the boot image. If neither this parameter, nor the \
 '--input-boot-file' parameter is used, a default header will be supplied to the boot image.",
                 )
                 .long("input-header-file")
-                .visible_aliases(&["input-header", "iheader"])
+                .visible_alias("ihf")
                 .value_name("FILE"),
         )
         .arg(
             Arg::with_name("input_kernel_file")
-                .help("Supplies a kernel image to insert into the boot image")
                 .long("input-kernel-file")
-                .visible_aliases(&["input-kernel", "ikernel"])
+                .visible_alias("ikf")
+                .help("Supplies a kernel image to insert into the boot image")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("input_ramdisk_file")
+                .long("input-ramdisk-file")
+                .visible_alias("irf")
+                .help("Supplies a ramdisk image to insert into the boot image")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("input_second_ramdisk_file")
+                .long("input-second-ramdisk-file")
+                .visible_alias("isf")
+                .help("Supplies a second ramdisk image to insert into the boot image")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("input_device_tree_file")
+                .long("input-device-tree-file")
+                .visible_alias("idf")
+                .help("Supplies a device tree to insert into the boot image")
                 .value_name("FILE"),
         )
         .arg(
             Arg::with_name("input_page_size")
                 .long("input-page-size")
-                .visible_alias("ipage-size")
-                .short("p")
                 .help("Treat the input boot image as if it had this page size")
+                .visible_aliases(&["ip", "ipage"])
                 .long_help(
-                    "
-Treat the input boot image as if it had this page size. This switch is required if the input \
-boot image or the input header have their page sizes set to 0. This parameter does nothing when no \
-boot image or kernel image have been passed.",
+"Treat the input boot image as if it had this page size. This switch is required if the input \
+boot image has its page size set to 0.",
                 )
-                .value_name("INPUT_PAGE_SIZE"),
+                .value_name("INPUT_PAGE_SIZE")
+                .requires("input_boot_file")
         )
 }
 
-fn main_unpack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
-    use std::fs::File;
-
-    let input_path = Path::new(arguments.value_of("input_file").unwrap());
-
-    let mut input_file = match File::open(input_path) {
-        Ok(file) => file,
-        Err(error) => console.print_fatal_error(
-            &format!("to open boot image file '{}'", input_path.display()),
-            Some(&error),
-        ),
-    };
-
-    let header = read_header(
-        &mut input_file,
-        !arguments.is_present("no_magic_check"),
-        arguments.value_of("page_size").map(|_| {
-            value_t!(arguments.value_of("page_size"), u32).unwrap_or_else(|error| error.exit())
-        }),
-        &mut console,
-    );
-
-    console.print_status_success("Parsed", "header.");
-
-    let copy_requested = {
-        // Helper function to extract sections out of the boot image. Returns true if
-        // the user requested to extract this section, false otherwise.
-        let mut copy_data = |output_key, section| if let Some(output_path) =
-            arguments.value_of(output_key).map(|path| Path::new(path))
-        {
-            let data = match header.read_section_from(&mut input_file, section) {
-                Ok(data) => data,
-                Err(error) => {
-                    console.print_error_as_warning(
-                        &format!(
-                            "Failed to read '{}' section from boot image '{}'",
-                            section,
-                            input_path.display()
-                        ),
-                        Some(&error),
-                    );
-                    return true;
-                }
-            };
-
-            {
-                if let Some(parent_path) = output_path.parent() {
-                    if !parent_path.exists() {
-                        use std::fs::create_dir_all;
-                        if let Err(ref error) = create_dir_all(parent_path) {
-                            console.print_error_as_warning(
-                                &format!(
-                                    "Could not create '{}' directory. ",
-                                    parent_path.display()
-                                ),
-                                Some(error),
-                            )
-                        } else {
-                            console.print_status_success(
-                                "Created",
-                                &format!("directory '{}'.", parent_path.display()),
-                            )
-                        }
-                    }
-                }
-            }
-
-            match File::create(output_path).and_then(|mut file| file.write_all(&data)) {
-                Ok(_) => console.print_status_success(
-                    "Unpacked",
-                    &format!("'{}' section into '{}'.", section, output_path.display()),
-                ),
-                Err(error) => console.print_error_as_warning(
-                    &format!(
-                        "Failed to write '{}' section into '{}'",
-                        section,
-                        output_path.display()
-                    ),
-                    Some(&error),
-                ),
-            }
-
-            return true;
-        } else {
-            return false;
-        };
-
-        [
-            copy_data("output_kernel_file", Section::Kernel),
-            copy_data("output_ramdisk_file", Section::Ramdisk),
-            copy_data("output_second_file", Section::Second),
-            copy_data("output_tree_file", Section::DeviceTree),
-        ].iter()
-            .any(|&copy_requested| copy_requested)
-    };
-
-    if !copy_requested {
-        console.print_warning_message(
-            "No sections extracted, as no sections were requested to be extracted.",
-        )
-    }
-}
-
-fn main_repack(arguments: &ArgMatches, mut console: ConsoleOutputHandler) {
+fn main_repack(arguments: &ArgMatches) -> Result<(), ApplicationError> {
     if arguments.is_present("input_page_size") &&
         !(arguments.is_present("input_boot_file") || arguments.is_present("input_header_file"))
     {
-        console.print_warning_message(
+        log_warning(
             "Input page size was supplied, but no input boot image or input header to apply it to.",
         );
     }
 
-    let override_page_size = arguments.value_of("input_page_size").map(|_| {
-        value_t!(arguments.value_of("input_page_size"), u32).unwrap_or_else(|error| error.exit())
-    });
+    let mut boot_image = {
+        let override_page_size = arguments.value_of("input_page_size").map(|_| {
+            value_t!(arguments.value_of("input_page_size"), u32)
+                .unwrap_or_else(|error| error.exit())
+        });
+        read_boot_image(arguments.value_of("input_boot_file"), override_page_size)?
+    };
 
-    let boot_image = arguments
-        .value_of("input_boot_file")
-        .map(|path| {
-            match BootImage::read_from_file(path, override_page_size) {
-                Ok(boot_image) => boot_image,
-                Err(ref error) => console.print_fatal_error(
-                    format!("Could not read boot image from '{}'.", path),
-                    Some(error),
-                ),
-            }
-        })
-        .unwrap_or(BootImage::default());
+    insert_sections_from_files(
+        &mut boot_image,
+        arguments.value_of("input_header_file"),
+        arguments.value_of("input_kernel_file"),
+        arguments.value_of("input_ramdisk_file"),
+        arguments.value_of("input_second_ramdisk_file"),
+        arguments.value_of("input_device_tree_file"),
+    )?;
 
-    print_sections(&boot_image);
+    if arguments.is_present("list_sections") {
+        print_sections(&boot_image);
+    }
+
+    return Ok(());
+}
+
+fn insert_sections_from_files(
+    boot_image: &mut BootImage,
+    header_path: Option<&str>,
+    kernel_path: Option<&str>,
+    ramdisk_path: Option<&str>,
+    second_ramdisk_path: Option<&str>,
+    device_tree_path: Option<&str>,
+) -> Result<(), ApplicationError> {
+    use std::fs::File;
+    use std::io::Read;
+
+    if let Some(path) = header_path {
+        let header = File::open(path)
+            .and_then(|ref mut file| Header::read_from(file))
+            .map_err(|e| {
+                ApplicationError::ReadSectionFromFile("header".into(), path.into(), e)
+            })?;
+        boot_image.insert_header(header).context(path)?;
+    }
+
+    {
+        if let Some(path) = kernel_path {
+            boot_image.insert_kernel(read_vector_section("kernel", path)?);
+        }
+        if let Some(path) = ramdisk_path {
+            boot_image.insert_ramdisk(read_vector_section("ramdisk", path)?);
+        }
+        if let Some(path) = second_ramdisk_path {
+            boot_image.insert_second_ramdisk(read_vector_section("second ramdisk", path)?);
+        }
+        if let Some(path) = device_tree_path {
+            boot_image.insert_device_tree(read_vector_section("device tree", path)?);
+        }
+    }
+
+    fn read_vector_section(section_name: &str, path: &str) -> Result<Vec<u8>, ApplicationError> {
+        let mut output = Vec::new();
+        File::open(path)
+            .and_then(|mut f| f.read_to_end(&mut output))
+            .map(|_| output)
+            .map_err(|e| {
+                ApplicationError::ReadSectionFromFile(section_name.into(), path.into(), e)
+            })
+    }
+
+    Ok(())
+}
+
+fn read_boot_image(
+    boot_image_file: Option<&str>,
+    override_page_size: Option<u32>,
+) -> Result<BootImage, ApplicationError> {
+    match boot_image_file {
+        Some(path) => BootImage::read_from_file(path, override_page_size)
+            .context(path)
+            .map_err(|e| e.into()),
+        None => Ok(BootImage::default()),
+    }
 }
 
 fn print_sections(bi: &BootImage) {
@@ -346,142 +246,56 @@ fn print_sections(bi: &BootImage) {
     }
 }
 
-fn read_header<R: Read + Seek>(
-    source: &mut R,
-    magic_check: bool,
-    override_page_size: Option<u32>,
-    console: &mut ConsoleOutputHandler,
-) -> Header {
-    if !magic_check {
-        // Make clear that any following errors might be caused by it not being a valid
-        // header.
-        console.print_warning_message("Skipping header magic check.");
-    } else {
-        console.print_warning_message("Magic check is currently not implemented.");
+mod logger {
+    use colored::Colorize;
+    use std::error::Error;
+
+    pub fn log_error<S: AsRef<str>>(message: S) {
+        eprintln!("{} {}", "error:".bold().red(), message.as_ref());
     }
 
-    let mut header_data = Header::create_buffer();
-    if let Err(ref error) = source.read_exact(&mut *header_data) {
-        console.print_fatal_error("Failed to read boot image header.", Some(error))
+    pub fn log_warning<S: AsRef<str>>(message: S) {
+        eprintln!("{} {}", "warning:".bold().yellow(), message.as_ref());
     }
 
-    let mut header = Header::parse(&header_data);
-
-    if let Some(page_size) = override_page_size {
-        header.page_size = page_size;
+    pub fn log_warning_cause<S: AsRef<str>>(message: S, cause: &Error) {
+        log_warning(message);
+        let mut cause_opt = Some(cause);
+        while let Some(cause) = cause_opt {
+            eprintln!("{} {}", "caused by".yellow(), cause);
+            cause_opt = cause.cause();
+        }
     }
 
-    header
+    pub fn log_error_cause<S: AsRef<str>>(message: S, cause: &Error) {
+        log_error(message);
+        let mut cause_opt = Some(cause);
+        while let Some(cause) = cause_opt {
+            eprintln!("{} {}", "caused by".red(), cause);
+            cause_opt = cause.cause();
+        }
+    }
 }
 
-mod console {
-    use std::error::Error;
-    use std::io::Write;
-    use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
-
-    /// An interface for the application to the console output. Handles things
-    /// like
-    /// formatting.
-    ///
-    /// If this structure ever fails writing, the error will be silently
-    /// ignored.
-    pub struct ConsoleOutputHandler {
-        stream: StandardStream,
-    }
-
-    impl ConsoleOutputHandler {
-        /// Creates a new structure.
-        pub fn new(color: ColorChoice) -> Self {
-            ConsoleOutputHandler {
-                stream: StandardStream::stdout(color),
-            }
+quick_error! {
+    #[derive(Debug)]
+    enum ApplicationError {
+        ReadBootImage(path: PathBuf, cause: ReadBootImageError) {
+            description("Could not read boot image.")
+            display("Could not read boot image from '{}'.", path.display())
+            context(path: AsRef<Path>, cause: ReadBootImageError) -> (path.as_ref().into(), cause)
+            cause(cause)
         }
-
-        pub fn print_message<M: AsRef<str>>(&mut self, message: M) {
-            let _ = self.stream.set_color(&ColorSpec::new());
-            let _ = writeln!(self.stream, "{}", message.as_ref());
+        ReadSectionFromFile(section_name: String, path: PathBuf, cause: IoError) {
+            description("Could not read section from file.")
+            display("Could not read the '{}' section from '{}'.", section_name, path.display())
+            cause(cause)
         }
-
-        pub fn print_error_message<M: AsRef<str>>(&mut self, message: M) {
-            let _ = self.stream
-                .set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true));
-
-            let _ = write!(self.stream, "error: ");
-            self.print_message(message);
-        }
-
-        pub fn print_warning_message<M: AsRef<str>>(&mut self, message: M) {
-            let _ = self.stream
-                .set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(true));
-
-            let _ = write!(self.stream, "warning: ");
-            self.print_message(message);
-        }
-
-        fn print_status<M1: AsRef<str>, M2: AsRef<str>>(
-            &mut self,
-            colour: &ColorSpec,
-            status: M1,
-            message: M2,
-        ) {
-            let _ = self.stream.set_color(colour);
-            let _ = write!(self.stream, "{: >12}", status.as_ref());
-            let _ = self.stream.set_color(&ColorSpec::new());
-            let _ = writeln!(self.stream, " {}", message.as_ref());
-        }
-
-        pub fn print_status_success(&mut self, status: &str, message: &str) {
-            self.print_status(
-                ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true),
-                status,
-                message,
-            );
-        }
-
-        fn print_error_cause(&mut self, mut error_opt: Option<&Error>, colour: Color) {
-            let _ = self.stream
-                .set_color(ColorSpec::new().set_fg(Some(colour.clone())));
-
-            let colour_spec = {
-                let mut colour_spec = ColorSpec::new();
-                colour_spec.set_fg(Some(colour));
-                colour_spec
-            };
-
-            while let Some(error) = error_opt {
-                let _ = self.stream.set_color(&colour_spec);
-                let _ = write!(self.stream, "caused by: ");
-                self.print_message(&format!("{}", error));
-                error_opt = error.cause();
-            }
-        }
-
-        pub fn print_error_as_error<M: AsRef<str>>(
-            &mut self,
-            message: M,
-            error_opt: Option<&Error>,
-        ) {
-            self.print_error_message(message);
-            self.print_error_cause(error_opt, Color::Red);
-        }
-
-        pub fn print_error_as_warning<M: AsRef<str>>(
-            &mut self,
-            message: M,
-            error_opt: Option<&Error>,
-        ) {
-            self.print_warning_message(message);
-            self.print_error_cause(error_opt, Color::Yellow);
-        }
-
-        pub fn print_fatal_error<M: AsRef<str>>(
-            &mut self,
-            message: M,
-            error_opt: Option<&Error>,
-        ) -> ! {
-            use std::process::exit;
-            self.print_error_as_error(message, error_opt);
-            exit(1);
+        InsertHeaderError(path: PathBuf, cause: BadHeaderError) {
+            description("Could not insert header into boot image.")
+            display("Could not insert header from '{}' into boot image.", path.display())
+            context(path: AsRef<Path>, cause: BadHeaderError) -> (path.as_ref().into(), cause)
+            cause(cause)
         }
     }
 }
