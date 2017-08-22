@@ -1,5 +1,5 @@
-use byteorder::{LittleEndian, ReadBytesExt};
-use std::io::{Error as IoError, Read};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io::{Error as IoError, Read, Write};
 
 /// The size of the header, in bytes. This might not match up with the
 /// amount of bytes the structure consumes while in memory.
@@ -96,7 +96,29 @@ impl Header {
         Ok(Header::parse(&buffer))
     }
 
-    pub fn correct_magic(&self) -> bool {
+    /// Writes this header to a `Write` target. Returns the amount of bytes
+    /// written.
+    pub fn write_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        target.write_all(&self.magic)?;
+        target.write_u32::<LittleEndian>(self.kernel_size)?;
+        target.write_u32::<LittleEndian>(self.kernel_load_address)?;
+        target.write_u32::<LittleEndian>(self.ramdisk_size)?;
+        target.write_u32::<LittleEndian>(self.ramdisk_load_address)?;
+        target.write_u32::<LittleEndian>(self.second_size)?;
+        target.write_u32::<LittleEndian>(self.second_load_address)?;
+        target.write_u32::<LittleEndian>(self.device_tree_size)?;
+        target.write_u32::<LittleEndian>(self._reserved)?;
+        target.write_u32::<LittleEndian>(self.kernel_tags_address)?;
+        target.write_u32::<LittleEndian>(self.page_size)?;
+        target.write_all(&self.product_name)?;
+        for ii in self.boot_arguments.iter() {
+            target.write_all(ii)?;
+        }
+        target.write_all(&self.unique_id)?;
+        Ok(HEADER_SIZE)
+    }
+
+    pub fn has_correct_magic(&self) -> bool {
         self.magic == MAGIC_STR.as_bytes()
     }
 }

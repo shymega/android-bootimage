@@ -8,7 +8,7 @@ extern crate humansize;
 
 use android_bootimage::{BadHeaderError, BootImage, Header, ReadBootImageError};
 use clap::{App, Arg, ArgMatches};
-use logger::{log_error, log_error_cause, log_warning, log_warning_cause};
+use logger::{log_debug, log_error, log_error_cause, log_warning, log_warning_cause};
 use quick_error::ResultExt;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
@@ -118,6 +118,62 @@ boot image has its page size set to 0.",
                 .value_name("INPUT_PAGE_SIZE")
                 .requires("input_boot_file")
         )
+        .arg(
+            Arg::with_name("output_boot_image_file")
+                .long("output-boot-image-file")
+                .visible_alias("obf")
+                .help("Write the boot image to a file")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("output_kernel_file")
+                .long("output-kernel-file")
+                .visible_alias("okf")
+                .default_value_if("output_all_default", None, "boot/header.img")
+                .help("Extract the boot image's kernel to a file")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("output_ramdisk_file")
+                .long("output-ramdisk-file")
+                .visible_alias("orf")
+                .default_value_if("output_all_default", None, "boot/ramdisk.img")
+                .help("Extract the boot image's ramdisk to a file")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("output_second_ramdisk_file")
+                .long("output-second-ramdisk-file")
+                .visible_alias("osf")
+                .default_value_if("output_all_default", None, "boot/second.img")
+                .help("Extract the boot image's second ramdisk to a file")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("output_device_tree_file")
+                .long("output-device-tree-file")
+                .visible_alias("odf")
+                .default_value_if("output_all_default", None, "boot/dt.img")
+                .help("Extract the boot image's device tree to a file")
+                .value_name("FILE"),
+        )
+        .arg(
+            Arg::with_name("output_all_default")
+            .long("output-all")
+            .short("a")
+            .help("Output the boot image sections to the default locations")
+            .long_help(
+"Output the boot image sections to the default locations. This does not output the boot image \
+itself. Locations can still be overriden with the respective output parameters.
+
+Default locations:
+ - Header: 'boot/header.img'
+ - Kernel: 'boot/kernel.img'
+ - Ramdisk: 'boot/ramdisk.img'
+ - Second Ramdisk: 'boot/second.img'
+ - Device Tree: 'boot/dt.img'"
+            )
+        )
 }
 
 fn main_repack(arguments: &ArgMatches) -> Result<(), ApplicationError> {
@@ -149,6 +205,16 @@ fn main_repack(arguments: &ArgMatches) -> Result<(), ApplicationError> {
     if arguments.is_present("list_sections") {
         print_sections(&boot_image);
     }
+
+    extract_boot_image_into_files(
+        &boot_image,
+        arguments.value_of("output_boot_image_file"),
+        arguments.value_of("output_header_file"),
+        arguments.value_of("output_kernel_file"),
+        arguments.value_of("output_ramdisk_file"),
+        arguments.value_of("output_second_ramdisk_file"),
+        arguments.value_of("output_device_tree_file"),
+    );
 
     return Ok(());
 }
@@ -201,6 +267,89 @@ fn insert_sections_from_files(
     Ok(())
 }
 
+/// Write the boot image and its sections to the specified files. Warn when a
+/// section could not be written.
+fn extract_boot_image_into_files(
+    boot_image: &BootImage,
+    boot_image_path: Option<&str>,
+    header_path: Option<&str>,
+    kernel_path: Option<&str>,
+    ramdisk_path: Option<&str>,
+    second_ramdisk_path: Option<&str>,
+    device_tree_path: Option<&str>,
+) {
+    use std::fs::File;
+
+    if let Some(path) = boot_image_path {
+        if let Err(ref error) =
+            File::create(path).and_then(|mut file| boot_image.write_to(&mut file))
+        {
+            log_warning_cause(
+                format!("Could not write the boot image to '{}'.", path,),
+                error,
+            );
+        }
+    }
+
+    if let Some(path) = header_path {
+        log_result(
+            "header",
+            path,
+            File::create(path).and_then(|mut file| boot_image.write_header_to(&mut file)),
+        );
+    }
+
+    if let Some(path) = kernel_path {
+        log_result(
+            "kernel",
+            path,
+            File::create(path).and_then(|mut file| boot_image.write_kernel_to(&mut file)),
+        );
+    }
+
+    if let Some(path) = ramdisk_path {
+        log_result(
+            "ramdisk",
+            path,
+            File::create(path).and_then(|mut file| boot_image.write_ramdisk_to(&mut file)),
+        );
+    }
+
+    if let Some(path) = second_ramdisk_path {
+        log_result(
+            "second ramdisk",
+            path,
+            File::create(path).and_then(|mut file| boot_image.write_second_ramdisk_to(&mut file)),
+        );
+    }
+
+    if let Some(path) = device_tree_path {
+        log_result(
+            "device tree",
+            path,
+            File::create(path).and_then(|mut file| boot_image.write_device_tree_to(&mut file)),
+        );
+    }
+
+    fn log_result(section: &str, path: &str, result: Result<usize, IoError>) {
+        use humansize::FileSize;
+        use humansize::file_size_opts::BINARY as BINARY_FILE_SIZE;
+
+        match result {
+            Ok(size) => log_debug(format!(
+                "Written '{}' section to '{}'. ({})",
+                section,
+                path,
+                size.file_size(BINARY_FILE_SIZE).unwrap()
+            )),
+            Err(ref error) => log_warning_cause(
+                format!("Could not write the '{}' section to '{}'.", section, path),
+                error,
+            ),
+        }
+    }
+}
+
 fn read_boot_image(
     boot_image_file: Option<&str>,
     override_page_size: Option<u32>,
@@ -249,6 +398,14 @@ fn print_sections(bi: &BootImage) {
 mod logger {
     use colored::Colorize;
     use std::error::Error;
+
+    #[cfg(debug_assertions)]
+    pub fn log_debug<S: AsRef<str>>(message: S) {
+        eprintln!("{} {}", "debug:".bold().blue(), message.as_ref());
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn log_debug<S: AsRef<str>>(_message: S) {}
 
     pub fn log_error<S: AsRef<str>>(message: S) {
         eprintln!("{} {}", "error:".bold().red(), message.as_ref());

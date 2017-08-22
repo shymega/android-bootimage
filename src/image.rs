@@ -1,5 +1,5 @@
 use Header;
-use std::io::{Error as IoError, Read, Seek};
+use std::io::{Error as IoError, Read, Seek, Write};
 use std::path::Path;
 
 /// A structure representing a boot image in memory. Used to modify the boot
@@ -27,7 +27,7 @@ impl BootImage {
     ///
     /// Returns the old header on success.
     pub fn insert_header(&mut self, mut new_header: Header) -> Result<Header, BadHeaderError> {
-        if !new_header.correct_magic() {
+        if !new_header.has_correct_magic() {
             Err(BadHeaderError::BadMagic(new_header))
         } else if new_header.page_size == 0 {
             Err(BadHeaderError::NoPageSize(new_header))
@@ -185,6 +185,8 @@ impl BootImage {
         source: &mut R,
         override_page_size: Option<u32>,
     ) -> Result<Self, ReadBootImageError> {
+        use std::io::SeekFrom;
+
         let mut boot_image = BootImage::default();
         let mut header = Header::read_from(source)?;
         header.page_size = override_page_size.unwrap_or(header.page_size);
@@ -196,21 +198,36 @@ impl BootImage {
         // exist, causing I/O errors that hide the real validation errors.
         let _ = boot_image.insert_header(header.clone())?;
 
+        // Read all the different sections into memory.
         {
-            // Read all the different sections into memory.
             let mut kernel = vec![0; header.kernel_size as usize];
-            let mut ramdisk = vec![0; header.ramdisk_size as usize];
-            let mut second_ramdisk = vec![0; header.second_size as usize];
-            let mut device_tree = vec![0; header.device_tree_size as usize];
+            source
+                .seek(SeekFrom::Start(boot_image.kernel_offset() as u64))?;
             source.read_exact(&mut kernel)?;
-            source.read_exact(&mut ramdisk)?;
-            source.read_exact(&mut second_ramdisk)?;
-            source.read_exact(&mut device_tree)?;
             boot_image.insert_kernel(kernel);
+        }
+        {
+            let mut ramdisk = vec![0; header.ramdisk_size as usize];
+            source
+                .seek(SeekFrom::Start(boot_image.ramdisk_offset() as u64))?;
+            source.read_exact(&mut ramdisk)?;
             boot_image.insert_ramdisk(ramdisk);
+        }
+        {
+            let mut second_ramdisk = vec![0; header.second_size as usize];
+            source
+                .seek(SeekFrom::Start(boot_image.second_ramdisk_offset() as u64))?;
+            source.read_exact(&mut second_ramdisk)?;
             boot_image.insert_second_ramdisk(second_ramdisk);
+        }
+        {
+            let mut device_tree = vec![0; header.device_tree_size as usize];
+            source
+                .seek(SeekFrom::Start(boot_image.device_tree_offset() as u64))?;
+            source.read_exact(&mut device_tree)?;
             boot_image.insert_device_tree(device_tree);
         }
+
         Ok(boot_image)
     }
 
@@ -227,6 +244,52 @@ impl BootImage {
 
         let mut file_handle = File::open(file_path)?;
         BootImage::read_from(&mut file_handle, override_page_size)
+    }
+
+    /// Writes this boot image to a `Write` target. Returns the amount of bytes
+    /// written.
+    pub fn write_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        let mut bytes_written = 0;
+        bytes_written += self.write_header_to(target)?;
+        bytes_written += self.write_kernel_to(target)?;
+        bytes_written += self.write_ramdisk_to(target)?;
+        bytes_written += self.write_second_ramdisk_to(target)?;
+        bytes_written += self.write_device_tree_to(target)?;
+        Ok(bytes_written)
+    }
+
+    /// Writes the header to a `Write` target. Returns the amount of bytes
+    /// written.
+    pub fn write_header_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        self.header.write_to(target)
+    }
+
+    /// Writes the kernel to a `Write` target. Returns the amount of bytes
+    /// written.
+    pub fn write_kernel_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        target.write_all(&self.kernel)?;
+        Ok(self.kernel.len())
+    }
+
+    /// Writes the ramdisk to a `Write` target. Returns the amount of bytes
+    /// written.
+    pub fn write_ramdisk_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        target.write_all(&self.ramdisk)?;
+        Ok(self.ramdisk.len())
+    }
+
+    /// Writes the second ramdisk to a `Write` target. Returns the amount of
+    /// bytes written.
+    pub fn write_second_ramdisk_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        target.write_all(&self.second_ramdisk)?;
+        Ok(self.second_ramdisk.len())
+    }
+
+    /// Writes the device tree to a `Write` target. Returns the amount of bytes
+    /// written.
+    pub fn write_device_tree_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+        target.write_all(&self.device_tree)?;
+        Ok(self.device_tree.len())
     }
 }
 
