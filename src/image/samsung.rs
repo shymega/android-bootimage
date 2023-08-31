@@ -1,6 +1,11 @@
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::hash::Hasher;
+use core2::io::{Read, Seek, Write, Error as IoError};
+use errors::{BadHeaderError, ReadBootImageError};
+use header::HeaderTrait;
 use crate::header::SamsungHeader as Header;
-use std::io::{Error as IoError, Read, Seek, Write};
-use std::path::Path;
+
 
 /// A structure representing a boot image in memory. Used to modify the boot
 /// image through a convenient interface.
@@ -29,41 +34,41 @@ impl SamsungBootImage {
     /// Returns the old header on success.
     pub fn insert_header(&mut self, mut new_header: Header) -> Result<Header, BadHeaderError> {
         if !new_header.has_correct_magic() {
-            Err(BadHeaderError::BadMagic(new_header))
+            Err(BadHeaderError::BadMagic(Box::from(new_header)))?
         } else if new_header.page_size == 0 {
-            Err(BadHeaderError::NoPageSize(new_header))
-        } else {
-            ::std::mem::swap(&mut self.header, &mut new_header);
-            self.update_all_sizes();
-            Ok(new_header)
-        }
+            Err(BadHeaderError::NoPageSize(Box::from(new_header)))?
+        };
+
+        core::mem::swap(&mut self.header, &mut new_header);
+        self.update_all_sizes();
+        Ok(new_header)
     }
 
     /// Inserts a kernel into this boot image, returning the old one.
     pub fn insert_kernel(&mut self, mut new_kernel: Vec<u8>) -> Vec<u8> {
         self.header.kernel_size = new_kernel.len() as u32;
-        ::std::mem::swap(&mut self.kernel, &mut new_kernel);
+        core::mem::swap(&mut self.kernel, &mut new_kernel);
         new_kernel
     }
 
     /// Inserts a ramdisk into this boot image, returning the old one.
     pub fn insert_ramdisk(&mut self, mut new_ramdisk: Vec<u8>) -> Vec<u8> {
         self.header.ramdisk_size = new_ramdisk.len() as u32;
-        ::std::mem::swap(&mut self.ramdisk, &mut new_ramdisk);
+        core::mem::swap(&mut self.ramdisk, &mut new_ramdisk);
         new_ramdisk
     }
 
     /// Inserts a second ramdisk into this boot image, returning the old one.
     pub fn insert_second_ramdisk(&mut self, mut new_second_ramdisk: Vec<u8>) -> Vec<u8> {
         self.header.second_size = new_second_ramdisk.len() as u32;
-        ::std::mem::swap(&mut self.second_ramdisk, &mut new_second_ramdisk);
+        core::mem::swap(&mut self.second_ramdisk, &mut new_second_ramdisk);
         new_second_ramdisk
     }
 
     /// Inserts a device tree into this boot image, returning the old one.
     pub fn insert_device_tree(&mut self, mut new_device_tree: Vec<u8>) -> Vec<u8> {
         self.header.device_tree_size = new_device_tree.len() as u32;
-        ::std::mem::swap(&mut self.device_tree, &mut new_device_tree);
+        core::mem::swap(&mut self.device_tree, &mut new_device_tree);
         new_device_tree
     }
 
@@ -102,7 +107,7 @@ impl SamsungBootImage {
 
     /// Returns how many pages the header is big.
     pub fn header_size_in_pages(&self) -> usize {
-        size_to_size_in_pages(::std::mem::size_of::<Header>(), self.page_size())
+        size_to_size_in_pages(core::mem::size_of::<Header>(), self.page_size())
     }
 
     /// Returns how many pages the kernel is big.
@@ -186,9 +191,10 @@ impl SamsungBootImage {
         source: &mut R,
         override_page_size: Option<u32>,
     ) -> Result<Self, ReadBootImageError> {
-        use std::io::SeekFrom;
+        use core2::io::SeekFrom;
+        use alloc::vec;
 
-        let mut boot_image = BootImage::default();
+        let mut boot_image = SamsungBootImage::default();
         let mut header = Header::read_from(source)?;
         header.page_size = override_page_size.unwrap_or(header.page_size);
 
@@ -197,7 +203,7 @@ impl SamsungBootImage {
         // around for later will also delay the validation checks. Delaying the
         // validation checks means we might try to read in section data that might not
         // exist, causing I/O errors that hide the real validation errors.
-        let _ = boot_image.insert_header(header.clone())?;
+        _ = boot_image.insert_header(header.clone()).unwrap(); // FIXME: Handle cleaner.
 
         // Read all the different sections into memory.
         {
@@ -228,24 +234,9 @@ impl SamsungBootImage {
         Ok(boot_image)
     }
 
-    /// Reads the boot image from a file.
-    ///
-    /// As some boot images have their page size set to 0, an override page
-    /// size can be supplied. If the header size is set to 0, and no valid
-    /// override is supplied, this function will return an error.
-    pub fn read_from_file<P: AsRef<Path>>(
-        file_path: P,
-        override_page_size: Option<u32>,
-    ) -> Result<Self, ReadBootImageError> {
-        use std::fs::File;
-
-        let mut file_handle = File::open(file_path)?;
-        BootImage::read_from(&mut file_handle, override_page_size)
-    }
-
     /// Writes this boot image to a `Write` target. Returns the amount of bytes
     /// written.
-    pub fn write_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+    pub fn write_to<W: Write + Hasher>(&self, target: &mut W) -> Result<usize, IoError> {
         let mut bytes_written = 0;
         bytes_written += self.write_header_to(target)?;
         bytes_written += self.write_kernel_to(target)?;
@@ -257,7 +248,7 @@ impl SamsungBootImage {
 
     /// Writes the header to a `Write` target. Returns the amount of bytes
     /// written.
-    pub fn write_header_to<W: Write>(&self, target: &mut W) -> Result<usize, IoError> {
+    pub fn write_header_to<W: Write + Hasher>(&self, target: &mut W) -> Result<usize, IoError> {
         self.header.write_to(target)
     }
 
@@ -296,7 +287,7 @@ fn size_to_size_in_pages(size: usize, page_size: usize) -> usize {
     (size + page_size - 1) / page_size
 }
 
-impl Default for BootImage {
+impl Default for SamsungBootImage {
     /// Creates a new default boot image, with no sections at all.
     fn default() -> Self {
         Self {

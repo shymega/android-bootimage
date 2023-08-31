@@ -1,12 +1,13 @@
-use crate::header::consts::samsung::*;
+
 use crate::header::{HeaderTrait, SamsungHeaderTrait};
 use byteorder::{ByteOrder, LittleEndian};
 use core::hash::Hasher;
 use core::mem::transmute;
+use super::consts::samsung::*;
 use core2::io::{Error as IoError, Read, Write};
 
 /// Contains a magic header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SamsungHeader {
     /// Header magic. Used to make sure this is in fact a header.
     pub magic: [u8; SAMSUNG_MAGIC_SIZE],
@@ -62,7 +63,7 @@ impl HeaderTrait for SamsungHeader {
         Ok(Self::parse(&buffer))
     }
 
-    fn write<W>(&self, dst: &mut W) -> Result<usize, IoError>
+    fn write_to<W>(&self, dst: &mut W) -> Result<usize, IoError>
     where
         Self: Sized,
         W: Write + Hasher,

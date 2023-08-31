@@ -1,5 +1,5 @@
-/* mod android;
-mod samsung; */
+mod android;
+mod samsung;
 
 use alloc::vec::Vec;
 use super::header::HeaderKind;
