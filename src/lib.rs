@@ -1,9 +1,23 @@
+//! Lightweight library for handling Android Boot Images (including Samsung!)
+#![no_std]
+#![deny(
+    warnings,
+    missing_copy_implementations,
+    unused_imports,
+    missing_debug_implementations,
+    missing_docs,
+    clippy::all,
+    trivial_casts,
+    trivial_numeric_casts,
+    unused_import_braces,
+    unused_qualifications,
+    variant_size_differences
+)]
+
+extern crate alloc;
 extern crate byteorder;
-#[macro_use]
-extern crate quick_error;
+extern crate core2;
 
-mod header;
-mod image;
-
-pub use header::{HEADER_SIZE, Header};
-pub use image::{BadHeaderError, BootImage, ReadBootImageError};
+/* mod errors; */
+pub mod header;
+pub mod image;
