@@ -1,10 +1,11 @@
-use Header;
+use crate::header::SamsungHeader as Header;
 use std::io::{Error as IoError, Read, Seek, Write};
 use std::path::Path;
 
 /// A structure representing a boot image in memory. Used to modify the boot
 /// image through a convenient interface.
-pub struct BootImage {
+#[derive(Debug, Clone)]
+pub struct SamsungBootImage {
     /// The header of this boot image.
     header: Header,
     /// The kernel.
@@ -17,7 +18,7 @@ pub struct BootImage {
     device_tree: Vec<u8>,
 }
 
-impl BootImage {
+impl SamsungBootImage {
     /// Inserts a new header into this boot image. The sizes of the different
     /// sections (kernel, ramdisk, ...) will be updated with the ones in this
     /// boot image.
@@ -201,29 +202,25 @@ impl BootImage {
         // Read all the different sections into memory.
         {
             let mut kernel = vec![0; header.kernel_size as usize];
-            source
-                .seek(SeekFrom::Start(boot_image.kernel_offset() as u64))?;
+            source.seek(SeekFrom::Start(boot_image.kernel_offset() as u64))?;
             source.read_exact(&mut kernel)?;
             boot_image.insert_kernel(kernel);
         }
         {
             let mut ramdisk = vec![0; header.ramdisk_size as usize];
-            source
-                .seek(SeekFrom::Start(boot_image.ramdisk_offset() as u64))?;
+            source.seek(SeekFrom::Start(boot_image.ramdisk_offset() as u64))?;
             source.read_exact(&mut ramdisk)?;
             boot_image.insert_ramdisk(ramdisk);
         }
         {
             let mut second_ramdisk = vec![0; header.second_size as usize];
-            source
-                .seek(SeekFrom::Start(boot_image.second_ramdisk_offset() as u64))?;
+            source.seek(SeekFrom::Start(boot_image.second_ramdisk_offset() as u64))?;
             source.read_exact(&mut second_ramdisk)?;
             boot_image.insert_second_ramdisk(second_ramdisk);
         }
         {
             let mut device_tree = vec![0; header.device_tree_size as usize];
-            source
-                .seek(SeekFrom::Start(boot_image.device_tree_offset() as u64))?;
+            source.seek(SeekFrom::Start(boot_image.device_tree_offset() as u64))?;
             source.read_exact(&mut device_tree)?;
             boot_image.insert_device_tree(device_tree);
         }
@@ -302,44 +299,12 @@ fn size_to_size_in_pages(size: usize, page_size: usize) -> usize {
 impl Default for BootImage {
     /// Creates a new default boot image, with no sections at all.
     fn default() -> Self {
-        BootImage {
+        Self {
             header: Header::default(),
             kernel: Vec::new(),
             ramdisk: Vec::new(),
             second_ramdisk: Vec::new(),
             device_tree: Vec::new(),
-        }
-    }
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum BadHeaderError {
-        NoPageSize(header: Header) {
-            description("The header does not have a page size set")
-            display("The header does not have a page size set.")
-        }
-        BadMagic(header: Header) {
-            description("The header does not contain the 'ANDROID!' magic")
-            display("The header does not contain the 'ANDROID!' magic.")
-        }
-    }
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum ReadBootImageError {
-        Io(cause: IoError) {
-            description("An I/O error occured")
-            display("An I/O error occured.")
-            cause(cause)
-            from(cause: IoError) -> (cause)
-        }
-        BadHeader(cause: BadHeaderError) {
-            description("Could not parse image header")
-            display("Could not parse the boot image header")
-            cause(cause)
-            from(cause: BadHeaderError) -> (cause)
         }
     }
 }
