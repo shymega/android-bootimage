@@ -3,14 +3,14 @@ use crate::header::{HeaderTrait, SamsungHeaderTrait};
 use byteorder::{ByteOrder, LittleEndian};
 use core::hash::Hasher;
 use core::mem::transmute;
-use super::consts::samsung::*;
+use super::consts::samsung::SamsungConsts as consts;
 use core2::io::{Error as IoError, Read, Write};
 
 /// Contains a magic header.
 #[derive(Debug, Clone, Copy)]
 pub struct SamsungHeader {
     /// Header magic. Used to make sure this is in fact a header.
-    pub magic: [u8; SAMSUNG_MAGIC_SIZE],
+    pub magic: [u8; consts::SAMSUNG_MAGIC_SIZE],
     /// Ramdisk size, in bytes.
     pub kernel_size: u32,
     /// Address the ramdisk should be loaded to.
@@ -32,17 +32,17 @@ pub struct SamsungHeader {
     /// The page size.
     pub page_size: u32,
     /// Name of the product. This is a null-terminated ASCII string.
-    pub product_name: [u8; PRODUCT_NAME_SIZE],
+    pub product_name: [u8; consts::PRODUCT_NAME_SIZE],
     /// Arguments to pass to the kernel during boot. This is a nested array, as
     /// rust does not allow us to have arrays larger than 32 in size.
-    pub boot_arguments: [[u8; BOOT_ARGUMENTS_SIZE / 16]; 16],
+    pub boot_arguments: [[u8; consts::BOOT_ARGUMENTS_SIZE / 16]; 16],
     /// Used to uniquely identify boot images.
-    pub unique_id: [u8; UNIQUE_ID_SIZE],
+    pub unique_id: [u8; consts::UNIQUE_ID_SIZE],
 }
 
 impl HeaderTrait for SamsungHeader {
     fn get_header_size(&self) -> usize {
-        SAMSUNG_HEADER_SIZE
+        consts::SAMSUNG_HEADER_SIZE
     }
 
     fn get_magic_size(&self) -> usize {
@@ -50,7 +50,7 @@ impl HeaderTrait for SamsungHeader {
     }
 
     fn has_correct_magic(&self) -> bool {
-        self.magic == SAMSUNG_MAGIC_STR.as_bytes()
+        self.magic == consts::SAMSUNG_MAGIC_STR.as_bytes()
     }
 
     fn read_from<R>(src: &mut R) -> Result<Self, IoError>
@@ -58,7 +58,7 @@ impl HeaderTrait for SamsungHeader {
         Self: Sized,
         R: Read,
     {
-        let mut buffer = [0; SAMSUNG_HEADER_SIZE];
+        let mut buffer = [0; consts::SAMSUNG_HEADER_SIZE];
         src.read_exact(&mut buffer)?;
         Ok(Self::parse(&buffer))
     }
@@ -84,14 +84,14 @@ impl HeaderTrait for SamsungHeader {
             dst.write_all(ii)?;
         }
         dst.write_all(&self.unique_id)?;
-        Ok(SAMSUNG_HEADER_SIZE)
+        Ok(consts::SAMSUNG_HEADER_SIZE)
     }
 }
 
 impl SamsungHeaderTrait for SamsungHeader {
     /// Reads a header from the supplied source. This does not perform the
     /// magic check, and as a result cannot error.
-    fn parse(src: &[u8; SAMSUNG_HEADER_SIZE]) -> Self
+    fn parse(src: &[u8; consts::SAMSUNG_HEADER_SIZE]) -> Self
     where
         Self: Sized,
     {
@@ -99,7 +99,7 @@ impl SamsungHeaderTrait for SamsungHeader {
 
         Self {
             magic: {
-                let mut buffer = [0; SAMSUNG_MAGIC_SIZE];
+                let mut buffer = [0; consts::SAMSUNG_MAGIC_SIZE];
                 src.read_exact(&mut buffer).unwrap();
                 buffer
             },
@@ -114,17 +114,17 @@ impl SamsungHeaderTrait for SamsungHeader {
             kernel_tags_address: LittleEndian::read_u32(&src),
             page_size: LittleEndian::read_u32(&src),
             product_name: {
-                let mut buffer = [0; PRODUCT_NAME_SIZE];
+                let mut buffer = [0; consts::PRODUCT_NAME_SIZE];
                 src.read_exact(&mut buffer).unwrap();
                 buffer
             },
             boot_arguments: unsafe {
-                let mut buffer = [0; BOOT_ARGUMENTS_SIZE];
+                let mut buffer = [0; consts::BOOT_ARGUMENTS_SIZE];
                 src.read_exact(&mut buffer).unwrap();
                 transmute(buffer)
             },
             unique_id: {
-                let mut buffer = [0u8; UNIQUE_ID_SIZE];
+                let mut buffer = [0u8; consts::UNIQUE_ID_SIZE];
                 src.read_exact(&mut buffer).unwrap();
                 buffer
             },
@@ -135,7 +135,7 @@ impl SamsungHeaderTrait for SamsungHeader {
 impl Default for SamsungHeader {
     fn default() -> Self {
         Self {
-            magic: SAMSUNG_MAGIC,
+            magic: consts::SAMSUNG_MAGIC,
             kernel_size: 0,
             kernel_load_address: 0x10008000,
             ramdisk_size: 0,
@@ -146,9 +146,9 @@ impl Default for SamsungHeader {
             _reserved: 0x02000000,
             kernel_tags_address: 0x10000100,
             page_size: 2048,
-            product_name: [0; PRODUCT_NAME_SIZE],
+            product_name: [0; consts::PRODUCT_NAME_SIZE],
             boot_arguments: [[0; 32]; 16],
-            unique_id: [0; UNIQUE_ID_SIZE],
+            unique_id: [0; consts::UNIQUE_ID_SIZE],
         }
     }
 }

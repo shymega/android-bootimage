@@ -3,7 +3,8 @@ use alloc::vec::Vec;
 use core::hash::Hasher;
 use core2::io::{Read, Seek, Write, Error as IoError};
 use errors::{BadHeaderError, ReadBootImageError};
-use header::HeaderTrait;
+use header::{HeaderKind, HeaderTrait};
+use image::BootImage;
 use crate::header::SamsungHeader as Header;
 
 
@@ -21,6 +22,80 @@ pub struct SamsungBootImage {
     second_ramdisk: Vec<u8>,
     /// The device tree.
     device_tree: Vec<u8>,
+}
+
+impl BootImage for SamsungBootImage {
+    fn insert_header(&mut self, kind: HeaderKind) -> Result<HeaderKind, ()> {
+        Err(()) 
+    }
+
+    fn insert_kernel(&mut self, replacement: Vec<u8>) -> Vec<u8> {
+        todo!()
+    }
+
+    fn insert_ramdisk(&mut self, replacement: Vec<u8>) -> Vec<u8> {
+        todo!()
+    }
+
+    fn insert_second_ramdisk(&mut self, replacement: Vec<u8>) -> Vec<u8> {
+        todo!()
+    }
+
+    fn insert_device_tree(&mut self, replacement: Vec<u8>) -> Vec<u8> {
+        todo!()
+    }
+
+    fn update_all_sizes(&mut self) {
+        todo!()
+    }
+
+    fn get_page_size(&self) -> usize {
+        todo!()
+    }
+
+    fn get_kernel(&self) -> &[u8] {
+        todo!()
+    }
+
+    fn get_ramdisk(&self) -> &[u8] {
+        todo!()
+    }
+
+    fn get_second_ramdisk(&self) -> &[u8] {
+        todo!()
+    }
+
+    fn get_device_tree(&self) -> &[u8] {
+        todo!()
+    }
+
+    fn read_from<R>(src: &mut R, page_size: Option<u32>) -> Result<Self, IoError> where Self: Sized, R: Read + Seek {
+        todo!()
+    }
+
+    fn write_all_to<W>(&self, dst: &mut W) -> Result<usize, IoError> where W: Write {
+        todo!()
+    }
+
+    fn write_header_to<W>(&self, dst: &mut W) -> Result<usize, IoError> where W: Write {
+        todo!()
+    }
+
+    fn write_kernel_to<W>(&self, dst: &mut W) -> Result<usize, IoError> where W: Write {
+        todo!()
+    }
+
+    fn write_ramdisk_to<W>(&self, dst: &mut W) -> Result<usize, IoError> where W: Write {
+        todo!()
+    }
+
+    fn write_second_ramdisk_to<W>(&self, dst: &mut W) -> Result<usize, IoError> where W: Write {
+        todo!()
+    }
+
+    fn write_device_tree_to<W>(&self, dst: &mut W) -> Result<usize, IoError> where W: Write {
+        todo!()
+    }
 }
 
 impl SamsungBootImage {

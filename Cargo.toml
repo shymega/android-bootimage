@@ -1,25 +1,20 @@
 [package]
 name = "android-bootimage"
-version = "0.1.0"
-authors = ["Jeroen Bollen <contact@jeroenbollen.eu>"]
-description = "A tool to handle android boot images. It currently only works for Samsung boot images."
-homepage = "https://gitlab.com/binero/android-bootimage"
-repository = "https://gitlab.com/binero/android-bootimage"
-readme = "Readme.md"
-keywords = ["android", "tool", "bootimage"]
+version = "0.2.0"
+authors = ["Jeroen Bollen <contact@jeroenbollen.eu>", "Dom Rodriguez <shymega@shymega.org.uk>"]
+description = "Library-first crate, aiming to support both Android and Samsung-based boot images, and headers, with `no_std` for support on embedded systems."
+homepage = "https://gitlab.com/shymega/android-bootimage"
+repository = "https://gitlab.com/shymega/android-bootimage"
+readme = "README.md"
+keywords = ["android", "tool", "bootimage", "boot-image", "no-std"]
 categories = ["command-line-utilities", "data-structures"]
 license = "Unlicense"
 
+[features]
+default = ["std"]
+std = ["byteorder/std"]
+
 [dependencies]
-byteorder = "1.1"
-quick-error = "1.2"
-colored = "1.5.2"
-humansize = "1.0"
-
-[dependencies.clap]
-version = "2.26"
-features = ["color"]
-
-[[bin]]
-name = "android-bootimage"
-doc = false
+byteorder = { version = "1", default-features = false }
+core2 = "0.4.0"
+thiserror-no-std = "2.0.2"
